@@ -1,0 +1,80 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: threat_monitor_db
+    environment:
+      POSTGRES_DB: threat_db
+      POSTGRES_USER: threat_admin
+      POSTGRES_PASSWORD: threat_secure_password_99
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./database/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
+      - ./database/seed.sql:/docker-entrypoint-initdb.d/02-seed.sql
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - soc-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U threat_admin -d threat_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  ml-service:
+    build:
+      context: ./ml-service
+      dockerfile: Dockerfile
+    container_name: threat_monitor_ml
+    ports:
+      - "8001:8001"
+    environment:
+      - PORT=8001
+    networks:
+      - soc-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: threat_monitor_backend
+    ports:
+      - "5000:5000"
+    environment:
+      - PORT=5000
+      - NODE_ENV=production
+      - JWT_SECRET=soc_prod_super_secret_jwt_key_9812739
+      - ML_SERVICE_URL=http://ml-service:8001
+      - DATABASE_URL=postgresql://threat_admin:threat_secure_password_99@postgres:5432/threat_db
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ml-service:
+        condition: service_healthy
+    networks:
+      - soc-network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: threat_monitor_frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    networks:
+      - soc-network
+
+networks:
+  soc-network:
+    driver: bridge
+
+volumes:
+  pgdata:
